@@ -30,6 +30,7 @@ from seed import run_seed
 from services.excel_processor import validate_and_clean, REQUIRED_COLUMNS
 from services.kpi_engine import compute_kpis
 from services.ai_insights import answer_question
+from services.chart_engine import build_charts
 
 st.set_page_config(page_title="MG Analytics Portal", page_icon="📊", layout="wide")
 
@@ -98,6 +99,24 @@ def render_login():
 
 
 # -------------------------------------------------------------- dashboard --
+def get_latest_clean_data(db, department_id: int) -> pd.DataFrame:
+    """Loads the row-level cleaned data from the most recent published upload."""
+    upload = (
+        db.query(models.Upload)
+        .filter(models.Upload.department_id == department_id)
+        .filter(models.Upload.status == "published")
+        .filter(models.Upload.clean_data_path.isnot(None))
+        .order_by(models.Upload.processed_at.desc())
+        .first()
+    )
+    if not upload:
+        return None
+    try:
+        return pd.read_csv(upload.clean_data_path)
+    except Exception:
+        return None
+
+
 def get_dashboard(db, department_code: str):
     department = db.query(models.Department).filter(models.Department.code == department_code).first()
     if not department:
@@ -159,6 +178,25 @@ def render_dashboard(db, department_code: str):
             else:
                 st.metric(k["name"], k["value_text"] or "—")
     st.caption(f"As of {kpis[0]['period_end']}")
+
+    clean_df = get_latest_clean_data(db, department.id)
+    chart_specs = build_charts(department_code, clean_df) if clean_df is not None else []
+    if chart_specs:
+        st.divider()
+        st.subheader("Charts")
+        for i in range(0, len(chart_specs), 2):
+            row = chart_specs[i:i + 2]
+            cols = st.columns(len(row))
+            for col, spec in zip(cols, row):
+                with col:
+                    st.caption(spec.title)
+                    if spec.kind == "line":
+                        st.line_chart(spec.data)
+                    else:
+                        st.bar_chart(spec.data)
+
+        with st.expander("View raw data"):
+            st.dataframe(clean_df, use_container_width=True)
 
 
 # ------------------------------------------------------------------ upload --
@@ -223,6 +261,10 @@ def render_upload(db, department_code: str, user_id: str):
         upload.row_count = result.row_count
         upload.valid_row_count = result.valid_row_count
         upload.status = "generating_kpis"
+
+        clean_path = f"./storage/uploads/{upload.id}_clean.csv"
+        result.dataframe.to_csv(clean_path, index=False)
+        upload.clean_data_path = clean_path
         db.commit()
 
         # 3. compute + persist KPIs

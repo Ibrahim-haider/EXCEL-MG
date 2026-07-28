@@ -65,6 +65,7 @@ class Upload(Base):
     row_count = Column(Integer, nullable=True)
     valid_row_count = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
+    clean_data_path = Column(String(500), nullable=True)
     uploaded_at = Column(DateTime, default=datetime.utcnow)
     processed_at = Column(DateTime, nullable=True)
 
